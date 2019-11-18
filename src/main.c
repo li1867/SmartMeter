@@ -37,7 +37,7 @@
 #include "stm32f0xx_tim.h"
 #include "stm32f0xx_usart.h"
 
-#include "Timer.h"
+#include "timer.h"
 #include "BlinkLed.h"
 
 // ----------------------------------------------------------------------------
@@ -86,8 +86,6 @@
 char line[3];
 int seconds = 0;
 
-//uint16_t currentValue[1000] = {0};
-// uint16_t voltageValue[1000] = {0};
 int currentBuff = 0;
 int voltageBuff = 0;
 
@@ -100,21 +98,8 @@ int out = 0;
 
 volatile int ts = 0;
 
-void uart1_send_buff(uint8_t buf[],uint32_t len) {
-    uint32_t i;
-    for(i=0;i<len;i++) {
-    	USART_SendData(USART1,(uint16_t)buf[i]);
-    	while(USART_GetFlagStatus(USART1,USART_FLAG_TXE)==RESET);
-    }
-    USART_SendData(USART1,(uint16_t)'\r');
-    while(USART_GetFlagStatus(USART1,USART_FLAG_TXE)==RESET);
-    USART_SendData(USART1,(uint16_t)'\n');
-    while(USART_GetFlagStatus(USART1,USART_FLAG_TXE)==RESET);
-}
+volatile clock_t start;
 
-/**
- * seperate the
- */
 void uart2_send_buff(uint8_t buf[],uint32_t len) {
     uint32_t i;
     for(i=0;i<len;i++) {
@@ -127,10 +112,7 @@ void uart2_send_buff(uint8_t buf[],uint32_t len) {
     while(USART_GetFlagStatus(USART2,USART_FLAG_TXE)==RESET);
 }
 
-/**
- * receiving message from usart rx
- */
-int receive_uart_frame(char * expected){
+int receive_uart_frame() {
     uint32_t n = 1;
     char ch[20] = "";
     ch[0]=' ';
@@ -154,15 +136,9 @@ int receive_uart_frame(char * expected){
     return 1;
 }
 
-/**
- * STM32 sends the command to ESP8266 by USART
- * @param  cmd  [command that will send to esp8266]
- * @param  reply  [expected response from esp8266]
- * @param  wait  [estimate delay time. (millisecond)]
- */
+
 int ESP8266_SendCmd(char* cmd)
 {
-	//trace_printf("Command send to ESP8266: %s\n", cmd);
     uart2_send_buff((uint8_t*)cmd, strlen(cmd));
     if (receive_uart_frame("OK") == 0) {
     	return 0;
@@ -170,17 +146,14 @@ int ESP8266_SendCmd(char* cmd)
     return 1;
 }
 
-/**
- * [ESP8266_JoinAP connect to WiFi]
- * @param  ssid [WiFi user name]
- * @param  psd  [WiFi password]
- */
+
 void ESP8266_JoinAP(char* ssid, char* psd)
 {
     int ret = 0;
     char ssid_psd[120] = {0};
     char requestIPCmd[120] = {0};
     sprintf(ssid_psd,"AT+CWJAP=\"%s\",\"%s\"",ssid, psd);
+    ESP8266_SendCmd(ssid_psd);
 }
 
 
@@ -191,57 +164,124 @@ void serverCommunication(char * data) {
 	uart2_send_buff((uint8_t*)data, strlen(data));
 }
 
-/**
- * [Connect to the server, TCP/IP protocol]
- * @param ip  ip address
- * @param port port number
- */
+
 void ESP8266_ConnectToServer(char* ip, char* port) {
 	char destination[120] = {0};
 	sprintf(destination, "AT+CIPSTART=\"TCP\",\"%s\",%s", ip, port);
 	ESP8266_SendCmd(destination);
 }
 
-/**
- * [ESP8266_Init initialize esp8266]
- */
+
 void ESP8266_Init() {
     ESP8266_SendCmd("AT+CWMODE=1");
     receive_uart_frame("OK");
 
 }
 
-/**
- * timer handler, in this function, ADC will take 1000 samples in one second
- */
+void ESP8266_CloseServer() {
+	ESP8266_SendCmd("AT+CIPCLOSE");
+}
+
+int vbuffer[40] = {0};
+int cbuffer[40] = {0};
+int bufferCount = 0;
+
+int pfCount = 0;
+int vpf = 0;  //sum of voltage power factor
+int cpf = 0;  //sum of current power factor
+int pfSum = 0;
+int volOffset = 0;
+
 void TIM2_IRQHandler(void) {
-	//if 1000 sample reached, we clear the counter
+//	if (counter == 40000) {
+////		ESP8266_ConnectToServer("54.191.41.90", "1234");
+//		//trace_printf("here1\n");
+//		ts += 1;
+//		if (ts == 86400) {
+//			ts = 0;
+//		}
+//		counter = 0;
+//		char * dataSend[120];
+//		int powerFactor = 0;
+//		powerFactor = abs(volPowerFactorCt - curPowerFactorCt);
+////		trace_printf("%d\n", voltageBuff);
+////		sprintf(dataSend, "POST / ?meter_id=1&timestamp=%d&voltage=%d&current=%d&power_factor=%d HTTP/1.0\r\n \r\n", ts, voltageBuff, currentBuff, powerFactor);
+//		char sendCmd[120] = {0};
+////		sprintf(sendCmd, "AT+CIPSEND=%u",strlen(dataSend));
+////		ESP8266_SendCmd(sendCmd);
+//		trace_printf("here\n");
+////		uart2_send_buff((uint8_t*)dataSend, strlen(dataSend));
+//		currentBuff = 0;
+//		voltageBuff = 0;
+////		ESP8266_CloseServer();
+//	}
+
 	if (counter == 1000) {
+		vbuffer[bufferCount] = voltageBuff;
+		cbuffer[bufferCount] = currentBuff;
+		voltageBuff = 0;
+		currentBuff = 0;
+		bufferCount += 1;
+		counter = 0;
+	}
+
+	if (bufferCount == 40) {
+		//ESP8266_ConnectToServer("10.186.149.12", "3000");
+		trace_printf("%d\n", pfCount);
+		pfCount = 0;
 		ts += 1;
 		if (ts == 86400) {
 			ts = 0;
 		}
-		ESP8266_ConnectToServer("54.191.41.90", "80");
-		trace_printf("%d , %d\n",curPowerFactorCt,  volPowerFactorCt);
-		int powerFactor = abs(curPowerFactorCt - volPowerFactorCt);
-		char * dataSend[120];
-		sprintf(dataSend, "meter_id=1, timestamp=%d, voltage=%d, current=%d, power_factor=%d\n", ts, voltageBuff, currentBuff, powerFactor);
-		//sprintf(dataSend, "?meter_id=1&timestamp=3&current=9&voltage=210&power_factor=55\n");
-		counter = 0;
-		++seconds;
-		trace_printf("Second %u\n", seconds);
-		trace_printf("%s\n", dataSend);
-		currentBuff = 0;
-		voltageBuff = 0;
-		curPowerFactorCt = 0;
-		volPowerFactorCt = 0;
+		char * vdataTemp[150] = {};
+		char * cdataTemp[150] = {};
+		for (int i = 0; i < 40; i++) {
+			char * data[12] = {};
+			sprintf(data, "%d ", vbuffer[i]);
+			strcat(vdataTemp, data);
+			char * data2[12] = {};
+			sprintf(data2, "%d ", cbuffer[i]);
+			strcat(cdataTemp, data2);
+		}
 
-		char sendCmd[120] = {0};
-		sprintf(sendCmd, "AT+CIPSEND=%u",strlen(dataSend));
-		ESP8266_SendCmd(sendCmd);
-		uart2_send_buff((uint8_t*)dataSend, strlen(dataSend));
+		char * strHeader[1000] = {};
+		sprintf(strHeader, "POST / ?meter_id=1&");
 
-		//uart1_send_buff((uint8_t*)dataSend, strlen(dataSend));
+		char * timestamp[20] = {};
+		sprintf(timestamp, "timestamp=%d", ts);
+		strcat(strHeader, timestamp);
+
+		char * volStr[100] = {};
+		strcpy(volStr, "&voltage=");
+		strcat(volStr, vdataTemp);
+		strcat(strHeader, volStr);
+
+		char * voltageOffset[10] = {};
+		sprintf(voltageOffset, "&volOffset=%d", volOffset);
+		strcat(strHeader, voltageOffset);
+		trace_printf("%d\n", volOffset);
+		volOffset = 0;
+
+		char * curStr[100] = {};
+		strcpy(curStr, "&current=");
+		strcat(curStr, cdataTemp);
+		strcat(strHeader, curStr);
+
+		char * powerFactor[10] = {};
+		sprintf(powerFactor, "&power_factor=%d", pfSum);
+		strcat(strHeader, powerFactor);
+		pfSum = 0;
+
+		char * strEnd = " HTTP/1.0\r\n \r\n";
+		strcat(strHeader, strEnd);
+
+		char * sendCmd[10] = {};
+		sprintf(sendCmd, "AT+CIPSEND=%u",strlen(strHeader));
+		//ESP8266_SendCmd(sendCmd);
+		uart2_send_buff((uint8_t*)strHeader, strlen(strHeader));
+		trace_printf("here\n");
+		bufferCount = 0;
+		//ESP8266_CloseServer();
 	}
 
 	//PA4 for current
@@ -253,13 +293,12 @@ void TIM2_IRQHandler(void) {
 	ADC1->CR |= ADC_CR_ADSTART;
 	while(!(ADC1->ISR & ADC_ISR_EOC));
 	//take the ADC1 channel 4 input and save the input to the currentValue array
-	out=ADC1->DR;  //minus the offset, not sure if the offset is correct or not.
+	out=ADC1->DR;
 	if (out >= 1930 || out <= 1950) {
-			curPowerFactorCt = counter;
+		cpf = counter;
 	}
 	out = out - 1940;
 	currentBuff += out * out;
-
 
 	//PA5 for voltage
 	ADC1->CHSELR = 0;
@@ -270,25 +309,23 @@ void TIM2_IRQHandler(void) {
 	//take the ADC1 channel 5 input and save the input to the currentValue array
 	out=ADC1->DR;
 	out = out - 2048;
+	volOffset += out;
 	voltageBuff += out * out;
-
-	if (2038 <= out || 2058 >= out) {
-		volPowerFactorCt = counter;
+	if ((2044 - 2048) <= (out) && (2052 - 2048) >= (out)) {
+		vpf = counter;
+		pfCount += 1;
 	}
-
+	pfSum += abs(vpf - cpf);
 	counter += 1;
 }
 
-/**
- * timers start
- */
 void tim2_init(void) {
 	RCC->APB1ENR|=RCC_APB1ENR_TIM2EN;
 	TIM_TimeBaseInitTypeDef Tinit;
 	Tinit.TIM_ClockDivision=0;
 	Tinit.TIM_CounterMode=TIM_CounterMode_Up;
 	Tinit.TIM_Period=1;
-	Tinit.TIM_Prescaler=4800;
+	Tinit.TIM_Prescaler = 120;
 	Tinit.TIM_RepetitionCounter=0;
 	TIM_TimeBaseInit(TIM2,&Tinit);
     TIM_ITConfig(TIM2,TIM_IT_Update,ENABLE);
@@ -296,9 +333,6 @@ void tim2_init(void) {
     NVIC->ISER[0]|=1<<TIM2_IRQn ;
 }
 
-/**
- * ADC configuration, PA4 and PA5
- */
 void ADC_init(void) {
 	//ADC enable
    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
@@ -320,8 +354,12 @@ int main(int argc, char* argv[])
   // At this stage the system clock should have already been configured
   // at high speed.
   trace_printf("System clock: %u Hz\n", SystemCoreClock);
-  ADC_init();
-
+  //ADC calibration
+  ADC1->CR &= ~ADC_CR_ADEN;
+  ADC1->CR |= ADC_CR_ADCAL;
+  while((ADC1->CR & ADC_CR_ADCAL) != 0) {}
+  trace_printf("ADC calibrated.\n");
+  //ESP8266_ConnectToServer("54.191.41.90", "1234");
 
   //  USART2 enable PA2-TX, PA3-RX
   USART_InitTypeDef USART_InitStructure;
@@ -345,32 +383,12 @@ int main(int argc, char* argv[])
   USART_Init(USART2, &USART_InitStructure);
   USART_Cmd(USART2,ENABLE);
 
-  //USART1 enable PA9-Tx, PA10-Rx. USART will be used during demo to fast transfer data to user.
-  RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1,ENABLE);
-  GPIO_PinAFConfig(GPIOA, GPIO_PinSource9, GPIO_AF_1);
-  GPIO_PinAFConfig(GPIOA, GPIO_PinSource10, GPIO_AF_1);
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9 | GPIO_Pin_10;
-  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
-  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
-  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
-  GPIO_Init(GPIOA, &GPIO_InitStructure);
-  USART_InitStructure.USART_BaudRate = 115200;
-  USART_InitStructure.USART_WordLength = USART_WordLength_8b;
-  USART_InitStructure.USART_StopBits = USART_StopBits_1;
-  USART_InitStructure.USART_Parity = USART_Parity_No;
-  USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
-  USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
-  USART_Init(USART1, &USART_InitStructure);
-  USART_Cmd(USART1,ENABLE);
-
   //ESP8266_Init();
   //ESP8266_JoinAP("TP-LINK_46D994", "8446D994");
-  //ESP8266_JoinAP("Peiyuan's Wi-Fi Network", "WUI980peiyuan");
-  //ESP8266_ConnectToServer("128.46.4.88", "34343");
-  //ESP8266_ConnectToServer("https://d1e692ghf5.execute-api.us-west-2.amazonaws.com/default/smartmeter-db-interface/", "80");
-  ESP8266_ConnectToServer("54.191.41.90", "80");
 
+  //ESP8266_ConnectToServer("128.46.4.88", "34343");
+  //ESP8266_ConnectToServer("54.191.41.90", "80");
+  ADC_init();
 
 
   // Infinite loop
